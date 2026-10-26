@@ -1,0 +1,401 @@
+<title>Орбита</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,500;1,300;1,500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #0a0a0a;
+  --mute: #6d6d6d;
+  --serif: "Cormorant Garamond", "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0a0a0a; --fg: #f4f4f4; --mute: #8c8c8c; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0a0a0a; --fg: #f4f4f4; --mute: #8c8c8c; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  font-family: var(--mono);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  overflow: hidden;
+}
+.bar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.bar b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; margin-left: 6px; }
+#stage { position: relative; flex: 1; min-height: 0; min-width: 0; }
+#cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ov {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s;
+  pointer-events: none;
+}
+.ov.show { opacity: 1; visibility: visible; }
+.ov-in { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 30rem; padding-inline: 8px; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--mute); }
+h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 300;
+  font-size: clamp(64px, 19vw, 120px);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.sub { margin: 0; font-size: 13px; line-height: 1.6; color: var(--mute); text-wrap: balance; max-width: 34ch; }
+.cta {
+  margin: 6px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 11px 18px;
+  border: 1px solid var(--fg);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+@keyframes breathe { 50% { opacity: 0.45; } }
+.hint { text-align: center; font-size: 11px; letter-spacing: 0.1em; color: var(--mute); }
+@media (prefers-reduced-motion: reduce) { .cta { animation: none; } .ov { transition: none; } }
+</style>
+
+<div class="bar">
+  <span>Орбита</span>
+  <span>Рекорд<b id="best">0</b></span>
+</div>
+
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div class="ov show" id="ov">
+    <div class="ov-in">
+      <p class="eyebrow" id="ovEye">Игра на одно касание</p>
+      <h1 id="ovTitle">Орбита</h1>
+      <p class="sub" id="ovSub">Прыгай между тремя орбитами, собирай кольца и не задевай толстые дуги.</p>
+      <p class="cta" id="ovCta">Нажми, чтобы начать</p>
+    </div>
+  </div>
+</div>
+
+<div class="hint">Тап или пробел: шаг на соседнюю орбиту</div>
+
+<script>
+(function () {
+  var TAU = Math.PI * 2;
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var stage = document.getElementById('stage');
+  var ov = document.getElementById('ov');
+  var ovEye = document.getElementById('ovEye');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovSub = document.getElementById('ovSub');
+  var ovCta = document.getElementById('ovCta');
+  var bestEl = document.getElementById('best');
+
+  function norm(a) { a = a % TAU; return a < 0 ? a + TAU : a; }
+  function adiff(a, b) { var d = Math.abs(norm(a) - norm(b)); return d > Math.PI ? TAU - d : d; }
+
+  // geometry
+  var W = 0, H = 0, cx = 0, cy = 0, S = 0, R = [0, 0, 0], PR = 8, TH = 12;
+
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    W = stage.clientWidth; H = stage.clientHeight;
+    cv.width = Math.max(1, Math.round(W * dpr));
+    cv.height = Math.max(1, Math.round(H * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = W / 2; cy = H / 2;
+    S = Math.max(40, Math.min(W, H) / 2 - 6);
+    R = [0.32 * S, 0.57 * S, 0.82 * S];
+    PR = S * 0.05; TH = S * 0.07;
+    rc = R[ring];
+  }
+
+  // state
+  var st = 'ready', score = 0, best = 0, tOver = 0, T = 0;
+  var ang = -Math.PI / 2, ring = 0, dir = 1, rc = 0;
+  var spawnT = 1.2, obs = [], pick = null, fx = [], trail = [];
+
+  try { best = parseInt(localStorage.getItem('orbita-best'), 10) || 0; } catch (e) { best = 0; }
+  bestEl.textContent = best;
+
+  function nextRing() {
+    var n = ring + dir, d = dir;
+    if (n > 2) { d = -1; n = ring - 1; }
+    if (n < 0) { d = 1; n = ring + 1; }
+    return { n: n, d: d };
+  }
+
+  function newPick() {
+    for (var i = 0; i < 30; i++) {
+      var r = Math.floor(Math.random() * 3);
+      var a = Math.random() * TAU;
+      if (adiff(a, ang) < 1.0) continue;
+      var ok = true;
+      for (var j = 0; j < obs.length; j++) {
+        if (obs[j].r === r && adiff(a, obs[j].a) < obs[j].len / 2 + 0.5) { ok = false; break; }
+      }
+      if (ok) return { r: r, a: a };
+    }
+    return { r: (ring + 1) % 3, a: norm(ang + Math.PI) };
+  }
+
+  function spawn() {
+    var maxObs = Math.min(3 + Math.floor(score / 3), 8);
+    if (obs.length >= maxObs) return;
+    for (var i = 0; i < 20; i++) {
+      var r = Math.floor(Math.random() * 3);
+      var a = Math.random() * TAU;
+      if (adiff(a, ang) < 1.3) continue;
+      var len = 0.5 + Math.random() * 0.5 + Math.min(score * 0.01, 0.3);
+      var v = (Math.random() < 0.5 ? -1 : 1) * (0.5 + Math.random() * 0.9);
+      obs.push({ r: r, a: a, len: len, v: v, age: 0, life: 6 + Math.random() * 2 });
+      return;
+    }
+  }
+
+  function reset() {
+    ang = -Math.PI / 2; ring = 0; dir = 1; rc = R[0];
+    score = 0; obs = []; fx = []; trail = []; spawnT = 1.2; T = 0;
+    pick = newPick();
+  }
+
+  function showOverlay(show) { ov.classList.toggle('show', show); }
+
+  function start() {
+    reset();
+    st = 'play';
+    showOverlay(false);
+  }
+
+  function die() {
+    st = 'over';
+    tOver = performance.now();
+    var x = cx + rc * Math.cos(ang), y = cy + rc * Math.sin(ang);
+    fx.push({ x: x, y: y, t: 0, d: 0.9, rad: S * 0.55, w: 2 });
+    fx.push({ x: x, y: y, t: 0, d: 0.5, rad: S * 0.22, w: 3 });
+    if (score > best) {
+      best = score;
+      try { localStorage.setItem('orbita-best', String(best)); } catch (e) {}
+    }
+    bestEl.textContent = best;
+    ovEye.textContent = 'Конец';
+    ovTitle.textContent = String(score);
+    ovSub.textContent = score > 0 && score >= best ? 'Новый рекорд' : 'Рекорд ' + best;
+    ovCta.textContent = 'Нажми, чтобы повторить';
+    setTimeout(function () { showOverlay(true); }, 550);
+  }
+
+  function hop() {
+    var nx = nextRing();
+    var x = cx + rc * Math.cos(ang), y = cy + rc * Math.sin(ang);
+    fx.push({ x: x, y: y, t: 0, d: 0.3, rad: S * 0.09, w: 1.5 });
+    ring = nx.n; dir = nx.d;
+  }
+
+  function action() {
+    if (st === 'ready') start();
+    else if (st === 'over') { if (performance.now() - tOver > 600) start(); }
+    else hop();
+  }
+
+  document.body.addEventListener('pointerdown', function (e) {
+    if (e.button !== undefined && e.button > 0) return;
+    action();
+  });
+  window.addEventListener('keydown', function (e) {
+    if (e.repeat) return;
+    var k = e.code;
+    if (k === 'Space' || k === 'Enter' || k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowRight' || k === 'ArrowLeft') {
+      e.preventDefault();
+      action();
+    }
+  });
+
+  function update(dt) {
+    T += dt;
+    for (var i = fx.length - 1; i >= 0; i--) { fx[i].t += dt; if (fx[i].t >= fx[i].d) fx.splice(i, 1); }
+    if (st === 'over') return;
+
+    var w = st === 'play' ? Math.min(1.7 + 0.05 * score, 3.0) : 1.1;
+    ang = norm(ang + w * dt);
+    var target = R[ring];
+    rc += (target - rc) * (1 - Math.exp(-14 * dt));
+
+    var px = cx + rc * Math.cos(ang), py = cy + rc * Math.sin(ang);
+    trail.push({ x: px, y: py });
+    if (trail.length > 16) trail.shift();
+
+    if (st !== 'play') return;
+
+    spawnT -= dt;
+    if (spawnT <= 0) { spawn(); spawnT = Math.max(0.65, 1.7 - 0.04 * score); }
+
+    for (var j = obs.length - 1; j >= 0; j--) {
+      var o = obs[j];
+      o.age += dt; o.a = norm(o.a + o.v * dt);
+      if (o.age >= o.life) { obs.splice(j, 1); continue; }
+      if (o.age > 0.5 && o.age < o.life - 0.4) {
+        var radial = Math.abs(rc - R[o.r]);
+        if (radial < TH / 2 + PR * 0.55 && adiff(ang, o.a) < o.len / 2 + (PR * 0.55) / R[o.r]) {
+          die();
+          return;
+        }
+      }
+    }
+
+    if (pick && Math.abs(rc - R[pick.r]) < PR * 1.2 && adiff(ang, pick.a) < 0.22) {
+      var qx = cx + R[pick.r] * Math.cos(pick.a), qy = cy + R[pick.r] * Math.sin(pick.a);
+      fx.push({ x: qx, y: qy, t: 0, d: 0.5, rad: S * 0.16, w: 2 });
+      score++;
+      pick = newPick();
+    }
+  }
+
+  var fg = '#0a0a0a', bg = '#ffffff', frameN = 0;
+  function readColors() {
+    var cs = getComputedStyle(document.documentElement);
+    fg = cs.getPropertyValue('--fg').trim() || fg;
+    bg = cs.getPropertyValue('--bg').trim() || bg;
+  }
+
+  function draw() {
+    if (frameN++ % 30 === 0) readColors();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // dial ticks
+    ctx.strokeStyle = fg;
+    ctx.lineWidth = 1;
+    for (var i = 0; i < 60; i++) {
+      var a = (i / 60) * TAU, long = i % 5 === 0;
+      var r1 = S * 0.94, r2 = S * (long ? 1.0 : 0.97);
+      ctx.globalAlpha = long ? 0.45 : 0.2;
+      ctx.beginPath();
+      ctx.moveTo(cx + r1 * Math.cos(a), cy + r1 * Math.sin(a));
+      ctx.lineTo(cx + r2 * Math.cos(a), cy + r2 * Math.sin(a));
+      ctx.stroke();
+    }
+
+    // orbits
+    ctx.globalAlpha = 0.18;
+    for (var k = 0; k < 3; k++) {
+      ctx.beginPath(); ctx.arc(cx, cy, R[k], 0, TAU); ctx.stroke();
+    }
+
+    // score in the centre
+    if (st !== 'ready') {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = fg;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '300 ' + Math.round(S * 0.34) + 'px "Cormorant Garamond", serif';
+      ctx.fillText(String(score), cx, cy + S * 0.02);
+    }
+
+    // obstacles
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = fg;
+    for (var j = 0; j < obs.length; j++) {
+      var o = obs[j];
+      var g = Math.min(1, o.age / 0.5) * Math.min(1, Math.max(0, (o.life - o.age) / 0.4));
+      var active = o.age > 0.5 && o.age < o.life - 0.4;
+      ctx.globalAlpha = active ? 1 : 0.35;
+      ctx.lineWidth = Math.max(0.5, TH * g);
+      ctx.beginPath();
+      ctx.arc(cx, cy, R[o.r], o.a - (o.len * g) / 2, o.a + (o.len * g) / 2);
+      ctx.stroke();
+    }
+
+    // pickup
+    if (pick && st !== 'over') {
+      var qx = cx + R[pick.r] * Math.cos(pick.a), qy = cy + R[pick.r] * Math.sin(pick.a);
+      ctx.strokeStyle = fg; ctx.lineWidth = 2; ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(qx, qy, PR * 0.7, 0, TAU); ctx.stroke();
+      ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(qx, qy, PR * (1.15 + 0.3 * Math.sin(T * 5)), 0, TAU); ctx.stroke();
+    }
+
+    // ghost target orbit
+    if (st === 'play') {
+      var nx = nextRing().n;
+      var gx = cx + R[nx] * Math.cos(ang), gy = cy + R[nx] * Math.sin(ang);
+      ctx.globalAlpha = 0.4; ctx.lineWidth = 1; ctx.strokeStyle = fg;
+      ctx.beginPath(); ctx.arc(gx, gy, PR * 0.6, 0, TAU); ctx.stroke();
+    }
+
+    // trail and player
+    if (st !== 'over') {
+      ctx.fillStyle = fg;
+      for (var t = 0; t < trail.length; t++) {
+        var f = t / trail.length;
+        ctx.globalAlpha = f * 0.35;
+        ctx.beginPath(); ctx.arc(trail[t].x, trail[t].y, PR * f * 0.8, 0, TAU); ctx.fill();
+      }
+      var x = cx + rc * Math.cos(ang), y = cy + rc * Math.sin(ang);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.arc(x, y, PR + 3, 0, TAU); ctx.fill();
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.arc(x, y, PR, 0, TAU); ctx.fill();
+    }
+
+    // pulses
+    ctx.strokeStyle = fg;
+    for (var m = 0; m < fx.length; m++) {
+      var p = fx[m], u = p.t / p.d;
+      ctx.globalAlpha = 1 - u;
+      ctx.lineWidth = p.w;
+      ctx.beginPath(); ctx.arc(p.x, p.y, PR + p.rad * u, 0, TAU); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  var last = performance.now();
+  function frame(now) {
+    var dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(frame);
+  }
+
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  window.addEventListener('resize', resize);
+  try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', readColors); } catch (e) {}
+  try { document.fonts.load('300 40px "Cormorant Garamond"'); } catch (e) {}
+
+  resize();
+  reset();
+  readColors();
+  requestAnimationFrame(frame);
+})();
+  </script>
